@@ -25,7 +25,7 @@ current_token = 0
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🍔 *Welcome to Food Order Bot*\n\n"
-        "📍 Please send your *address / Google Maps link*.",
+        "📍 Please send your Delivery *address link*.",
         parse_mode="Markdown"
     )
     context.user_data.clear()
@@ -41,7 +41,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "address":
         context.user_data["address"] = text
         context.user_data["step"] = "card"
-        await update.message.reply_text("💳 Please send *card image*.")
+        await update.message.reply_text("💳 Please send your "Swiggy Food card" (Image).")
 
     # ---- PRICE STEP ----
     elif step == "price":
@@ -158,3 +158,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
