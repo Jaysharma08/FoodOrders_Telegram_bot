@@ -41,7 +41,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == "address":
         context.user_data["address"] = text
         context.user_data["step"] = "card"
-        await update.message.reply_text("💳 Please send your "Swiggy Food card (Image).")
+        await update.message.reply_text('💳 Please send your "Swiggy Food card (Image)."')
+
 
     # ---- PRICE STEP ----
     elif step == "price":
@@ -158,5 +159,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
