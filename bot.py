@@ -1,4 +1,3 @@
-import os
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -12,149 +11,143 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+import os
 
-# ================== ENV ==================
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID = int(os.environ["ADMIN_ID"])
+# ================= CONFIG =================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# ================== MEMORY ==================
-orders = {}
+# ================= MEMORY =================
+orders = []
 current_token = 0
 
-# ================== START ==================
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🍔 Welcome!\n\n📍 Please send your *Google Maps Address Link*",
+        parse_mode="Markdown"
+    )
     context.user_data.clear()
     context.user_data["step"] = "address"
 
-    await update.message.reply_text(
-        "🍔 Welcome to Food Order Bot\n\n"
-        "📍 Send your ADDRESS (Google Maps link preferred)"
-    )
-
-# ================== HANDLE TEXT ==================
+# ================= TEXT HANDLER =================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_token
-    user = update.message.from_user
     text = update.message.text
     step = context.user_data.get("step")
 
-    # ---- ADDRESS ----
+    # STEP 1: ADDRESS
     if step == "address":
         context.user_data["address"] = text
-        context.user_data["step"] = "price"
-
+        context.user_data["step"] = "card"
         await update.message.reply_text(
-            "💰 Enter food price (minimum ₹199)"
+            "💳 Now send *Card Image* (photo only)",
+            parse_mode="Markdown"
         )
 
-    # ---- PRICE ----
+    # STEP 3: PRICE
     elif step == "price":
         try:
             price = int(text)
             if price < 199:
-                await update.message.reply_text("❌ Minimum price is ₹199")
+                await update.message.reply_text("❌ Minimum price ₹199")
                 return
 
-            context.user_data["price"] = price
-            context.user_data["step"] = "card"
+            current_token += 1
+            token = current_token
 
+            order = {
+                "token": token,
+                "user_id": update.message.from_user.id,
+                "name": update.message.from_user.first_name,
+                "address": context.user_data["address"],
+                "card_file_id": context.user_data["card_file_id"],
+                "price": price,
+                "completed": False
+            }
+            orders.append(order)
+
+            # CUSTOMER CONFIRMATION
             await update.message.reply_text(
-                "💳 Send CARD IMAGE (photo)"
+                f"✅ *Order Confirmed!*\n\n"
+                f"🎟 Token: {token}\n"
+                f"💰 Price: ₹{price}\n"
+                f"⏳ Please wait...",
+                parse_mode="Markdown"
             )
 
+            # ADMIN MESSAGE (PHOTO + BUTTON)
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    f"✅ Complete Token {token}",
+                    callback_data=f"complete_{token}"
+                )
+            ]])
+
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=order["card_file_id"],
+                caption=(
+                    f"📥 *New Order*\n\n"
+                    f"👤 Name: {order['name']}\n"
+                    f"🆔 User ID: {order['user_id']}\n"
+                    f"📍 Address:\n{order['address']}\n\n"
+                    f"🎟 Token: {token}\n"
+                    f"💰 Price: ₹{price}"
+                ),
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+
+            context.user_data.clear()
+
         except ValueError:
-            await update.message.reply_text("❌ Enter valid number")
+            await update.message.reply_text("❌ Enter valid price")
 
-# ================== HANDLE CARD IMAGE ==================
+# ================= PHOTO HANDLER =================
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global current_token
-    user = update.message.from_user
+    step = context.user_data.get("step")
 
-    if context.user_data.get("step") != "card":
-        return
+    if step == "card":
+        photo = update.message.photo[-1]
+        context.user_data["card_file_id"] = photo.file_id
+        context.user_data["step"] = "price"
 
-    current_token += 1
-    token = current_token
+        await update.message.reply_text(
+            "💰 Now send *Food Price* (₹)",
+            parse_mode="Markdown"
+        )
 
-    price = context.user_data["price"]
-    final_price = price - 100
-    wait_time = token * 5
-    address = context.user_data["address"]
-
-    file_id = update.message.photo[-1].file_id
-
-    orders[token] = {
-        "user_id": user.id,
-        "address": address,
-        "price": price,
-        "final_price": final_price,
-        "completed": False
-    }
-
-    # -------- CUSTOMER MESSAGE --------
-    await update.message.reply_text(
-        f"✅ Order Confirmed!\n\n"
-        f"🎟 Token No: {token}\n"
-        f"💰 Original Price: ₹{price}\n"
-        f"💸 Final Price: ₹{final_price}\n"
-        f"⏳ Waiting Time: ~{wait_time} min"
-    )
-
-    # -------- ADMIN MESSAGE --------
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"✅ Complete Token {token}",
-            callback_data=f"complete_{token}"
-        )]
-    ])
-
-    await context.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=file_id,
-        caption=(
-            f"📥 NEW ORDER\n\n"
-            f"🎟 Token: {token}\n"
-            f"👤 User ID: {user.id}\n"
-            f"📍 Address:\n{address}\n\n"
-            f"💰 Price: ₹{final_price}"
-        ),
-        reply_markup=keyboard
-    )
-
-    context.user_data.clear()
-
-# ================== ADMIN COMPLETE ==================
+# ================= ADMIN COMPLETE =================
 async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("❌ Not authorized", show_alert=True)
-        return
-
     token = int(query.data.split("_")[1])
-    order = orders.get(token)
 
-    if not order or order["completed"]:
-        await query.edit_message_text("⚠️ Already completed or invalid token")
-        return
+    for order in orders:
+        if order["token"] == token and not order["completed"]:
+            order["completed"] = True
 
-    order["completed"] = True
+            # CUSTOMER MESSAGE
+            await context.bot.send_message(
+                chat_id=order["user_id"],
+                text=(
+                    f"🎉 *Your Order is Completed!*\n\n"
+                    f"🎟 Token: {token}\n"
+                    f"🙏 Thank you!"
+                ),
+                parse_mode="Markdown"
+            )
 
-    # Notify customer
-    await context.bot.send_message(
-        chat_id=order["user_id"],
-        text=(
-            f"🎉 Your order (Token {token}) is COMPLETED!\n"
-            f"Enjoy your food 😄"
-        )
-    )
+            # ADMIN UPDATE
+            await query.edit_message_caption(
+                caption=query.message.caption + "\n\n✅ *Order Completed*",
+                parse_mode="Markdown"
+            )
+            return
 
-    await query.edit_message_text(
-        f"✅ Token {token} marked as COMPLETED"
-    )
-
-# ================== MAIN ==================
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -164,7 +157,7 @@ def main():
     app.add_handler(CallbackQueryHandler(complete_order))
 
     print("🤖 Bot running 24×7...")
-    app.run_polling()
+    app.run_polling(stop_signals=None)
 
 if __name__ == "__main__":
     main()
