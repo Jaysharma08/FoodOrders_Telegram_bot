@@ -1,16 +1,22 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
-    filters,
-    CallbackQueryHandler
+    filters
 )
 
 from config import BOT_TOKEN, ADMIN_ID
-from data import orders, get_next_token
-from admin import complete_order
+
+# ---------------- MEMORY ----------------
+orders = []
+current_token = 0
 
 # ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19,111 +25,114 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🍔 Welcome!\n\n"
-        "📍 Send your delivery address or Google Maps link:"
+        "📍 Send your **address link** (Google Maps):"
     )
 
-# ---------------- USER HANDLER ----------------
+# ---------------- MESSAGE HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global current_token
+    text = update.message.text
     user = update.message.from_user
+
     step = context.user_data.get("step")
 
-    # -------- ADDRESS --------
-    if step == "address" and update.message.text:
-        context.user_data["address"] = update.message.text
-        context.user_data["step"] = "card"
-
-        await update.message.reply_text(
-            "💳 Send card image (photo only):"
-        )
-        return
-
-    # -------- CARD IMAGE --------
-    if step == "card" and update.message.photo:
-        photo = update.message.photo[-1]
-        context.user_data["card_file_id"] = photo.file_id
+    # STEP 1: ADDRESS
+    if step == "address":
+        context.user_data["address"] = text
         context.user_data["step"] = "price"
 
         await update.message.reply_text(
             "💰 Enter food price (minimum ₹199):"
         )
-        return
 
-    # -------- PRICE --------
-    if step == "price" and update.message.text:
+    # STEP 2: PRICE
+    elif step == "price":
         try:
-            price = int(update.message.text)
+            price = int(text)
             if price < 199:
-                await update.message.reply_text("❌ Minimum price is ₹199.")
+                await update.message.reply_text("❌ Minimum price is ₹199")
                 return
 
-            token = get_next_token()
+            current_token += 1
+            token = current_token
             final_price = price - 100
-            wait_time = token * 5
 
             order = {
+                "token": token,
                 "user_id": user.id,
                 "name": user.first_name,
                 "address": context.user_data["address"],
-                "card_file_id": context.user_data["card_file_id"],
-                "original_price": price,
-                "final_price": final_price,
-                "token": token,
+                "price": final_price,
                 "completed": False
             }
             orders.append(order)
 
-            # ----- CUSTOMER MESSAGE -----
+            # CUSTOMER MESSAGE
             await update.message.reply_text(
                 f"✅ Order Confirmed!\n\n"
                 f"🎟 Token: {token}\n"
-                f"💰 Price: ₹{price}\n"
-                f"💸 Final: ₹{final_price}\n"
-                f"⏳ Waiting: ~{wait_time} min"
+                f"💰 Payable: ₹{final_price}"
             )
 
-            # ----- ADMIN CARD -----
-            keyboard = [[
+            # ADMIN MESSAGE
+            keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton(
                     f"✅ Complete Token {token}",
                     callback_data=f"complete_{token}"
                 )
-            ]]
+            ]])
 
-            await context.bot.send_photo(
+            await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                photo=context.user_data["card_file_id"],
-                caption=(
-                    f"📥 *New Order*\n\n"
+                text=(
+                    f"📥 NEW ORDER\n\n"
                     f"👤 {user.first_name}\n"
-                    f"🆔 `{user.id}`\n\n"
-                    f"📍 Address:\n{context.user_data['address']}\n\n"
                     f"🎟 Token: {token}\n"
-                    f"💰 Final Price: ₹{final_price}"
+                    f"📍 Address:\n{order['address']}\n"
+                    f"💰 Price: ₹{final_price}"
                 ),
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                reply_markup=keyboard
             )
 
             context.user_data.clear()
 
         except ValueError:
-            await update.message.reply_text("❌ Enter valid price.")
+            await update.message.reply_text("❌ Enter a valid number")
+
+# ---------------- ADMIN COMPLETE ----------------
+async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    token = int(query.data.split("_")[1])
+
+    for order in orders:
+        if order["token"] == token and not order["completed"]:
+            order["completed"] = True
+
+            # Notify CUSTOMER
+            await context.bot.send_message(
+                chat_id=order["user_id"],
+                text=f"🎉 Your order (Token {token}) is completed!"
+            )
+
+            # Update ADMIN message
+            await query.edit_message_text(
+                f"✅ Token {token} marked as COMPLETED"
+            )
+            return
+
+    await query.edit_message_text("❌ Order already completed")
 
 # ---------------- MAIN ----------------
 def main():
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .connect_timeout(30)
-        .read_timeout(30)
-        .build()
-    )
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(complete_order))
 
-    print("🤖 Bot is running...")
+    print("🤖 Bot running 24/7...")
     app.run_polling()
 
 if __name__ == "__main__":
