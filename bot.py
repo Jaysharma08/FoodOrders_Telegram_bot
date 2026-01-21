@@ -14,45 +14,45 @@ from telegram.ext import (
 import os
 
 # ================= CONFIG =================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")        # Railway variable
+ADMIN_ID = int(os.getenv("ADMIN_ID"))     # Railway variable
 
-# ================= MEMORY =================
+# ================= DATA =================
 orders = []
 current_token = 0
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🍔 Welcome!\n\n📍 Please send your *Google Maps Address Link*",
+        "🍔 *Welcome to Food Order Bot*\n\n"
+        "📍 Please send your *address / Google Maps link*.",
         parse_mode="Markdown"
     )
     context.user_data.clear()
     context.user_data["step"] = "address"
 
-# ================= TEXT HANDLER =================
+# ================= HANDLE TEXT =================
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global current_token
     text = update.message.text
     step = context.user_data.get("step")
 
-    # STEP 1: ADDRESS
+    # ---- ADDRESS STEP ----
     if step == "address":
         context.user_data["address"] = text
         context.user_data["step"] = "card"
-        await update.message.reply_text(
-            "💳 Now send *Card Image* (photo only)",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("💳 Please send *card image*.")
 
-    # STEP 3: PRICE
+    # ---- PRICE STEP ----
     elif step == "price":
         try:
             price = int(text)
+
             if price < 199:
-                await update.message.reply_text("❌ Minimum price ₹199")
+                await update.message.reply_text("❌ Minimum price is ₹199")
                 return
 
+            final_price = price - 101
             current_token += 1
             token = current_token
 
@@ -62,21 +62,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "name": update.message.from_user.first_name,
                 "address": context.user_data["address"],
                 "card_file_id": context.user_data["card_file_id"],
-                "price": price,
+                "original_price": price,
+                "final_price": final_price,
                 "completed": False
             }
             orders.append(order)
 
-            # CUSTOMER CONFIRMATION
+            # CUSTOMER MESSAGE
             await update.message.reply_text(
-                f"✅ *Order Confirmed!*\n\n"
+                f"✅ *Order Confirmed*\n\n"
                 f"🎟 Token: {token}\n"
-                f"💰 Price: ₹{price}\n"
-                f"⏳ Please wait...",
+                f"💰 Original: ₹{price}\n"
+                f"💸 Final: ₹{final_price}",
                 parse_mode="Markdown"
             )
 
-            # ADMIN MESSAGE (PHOTO + BUTTON)
+            # ADMIN MESSAGE
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton(
                     f"✅ Complete Token {token}",
@@ -89,11 +90,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 photo=order["card_file_id"],
                 caption=(
                     f"📥 *New Order*\n\n"
-                    f"👤 Name: {order['name']}\n"
-                    f"🆔 User ID: {order['user_id']}\n"
+                    f"👤 {order['name']}\n"
+                    f"🆔 {order['user_id']}\n"
                     f"📍 Address:\n{order['address']}\n\n"
                     f"🎟 Token: {token}\n"
-                    f"💰 Price: ₹{price}"
+                    f"💰 Original: ₹{price}\n"
+                    f"💸 Final: ₹{final_price}"
                 ),
                 parse_mode="Markdown",
                 reply_markup=keyboard
@@ -104,19 +106,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("❌ Enter valid price")
 
-# ================= PHOTO HANDLER =================
+# ================= HANDLE PHOTO =================
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    step = context.user_data.get("step")
+    if context.user_data.get("step") != "card":
+        return
 
-    if step == "card":
-        photo = update.message.photo[-1]
-        context.user_data["card_file_id"] = photo.file_id
-        context.user_data["step"] = "price"
+    photo = update.message.photo[-1]
+    context.user_data["card_file_id"] = photo.file_id
+    context.user_data["step"] = "price"
 
-        await update.message.reply_text(
-            "💰 Now send *Food Price* (₹)",
-            parse_mode="Markdown"
-        )
+    await update.message.reply_text(
+        "💰 Enter food price (minimum ₹199):"
+    )
 
 # ================= ADMIN COMPLETE =================
 async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,20 +130,16 @@ async def complete_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if order["token"] == token and not order["completed"]:
             order["completed"] = True
 
-            # CUSTOMER MESSAGE
-            await context.bot.send_message(
-                chat_id=order["user_id"],
-                text=(
-                    f"🎉 *Your Order is Completed!*\n\n"
-                    f"🎟 Token: {token}\n"
-                    f"🙏 Thank you!"
-                ),
+            # ADMIN CONFIRM
+            await query.edit_message_caption(
+                caption=query.message.caption + "\n\n✅ *Order Completed*",
                 parse_mode="Markdown"
             )
 
-            # ADMIN UPDATE
-            await query.edit_message_caption(
-                caption=query.message.caption + "\n\n✅ *Order Completed*",
+            # CUSTOMER MESSAGE
+            await context.bot.send_message(
+                chat_id=order["user_id"],
+                text=f"🎉 Your order (Token {token}) is *completed!*",
                 parse_mode="Markdown"
             )
             return
@@ -156,8 +153,8 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(complete_order))
 
-    print("🤖 Bot running 24×7...")
-    app.run_polling(stop_signals=None)
+    print("🤖 Bot running...")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
